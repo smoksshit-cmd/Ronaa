@@ -1,0 +1,195 @@
+/* Rona - Auto Image Generation Extension Styles */
+
+/* ============================================
+   НАСТРОЙКИ
+   ============================================ */
+
+.rona-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.rona-settings .flex-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.rona-settings .flex-row > label {
+    min-width: 150px;
+}
+
+.rona-settings .flex-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.rona-settings .flex1 {
+    flex: 1;
+}
+
+.rona-settings hr {
+    margin: 10px 0;
+    border: none;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.rona-settings h4 {
+    margin: 5px 0;
+    color: var(--SmartThemeBodyColor);
+    font-size: 1em;
+}
+
+.rona-settings .hint {
+    font-size: 0.85em;
+    color: var(--SmartThemeQuoteColor);
+    margin-top: 2px;
+    font-style: italic;
+}
+
+.rona-settings textarea.text_pole {
+    resize: vertical;
+    min-height: 50px;
+    font-family: inherit;
+}
+
+/* Скрытие секций */
+.rona-settings .hidden {
+    display: none;
+}
+
+/* ============================================
+   ЗАГРУЗКА
+   ============================================ */
+
+.rona-loading-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    min-width: 200px;
+    max-width: 100%;
+    background: linear-gradient(135deg, rgba(100, 100, 100, 0.1) 0%, rgba(50, 50, 50, 0.2) 100%);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 15px 0;
+    border: 2px dashed var(--SmartThemeBorderColor);
+    box-sizing: border-box;
+}
+
+.rona-spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid var(--SmartThemeBorderColor);
+    border-top-color: var(--SmartThemeBodyColor);
+    border-radius: 50%;
+    animation: rona-spin 1s linear infinite;
+}
+
+.rona-status {
+    margin-top: 15px;
+    font-size: 0.95em;
+    color: var(--SmartThemeQuoteColor);
+    text-align: center;
+}
+
+@keyframes rona-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   КОНТЕЙНЕР ИЗОБРАЖЕНИЙ
+   ============================================ */
+
+.rona-image-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 15px 0;
+    justify-content: center;
+}
+
+.rona-generated-image {
+    max-width: 100%;
+    max-height: 500px;
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s, box-shadow 0.2s;
+    cursor: pointer;
+}
+
+.rona-generated-image:hover {
+    transform: scale(1.02);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* Два изображения рядом */
+.rona-image-container.two-images .rona-generated-image {
+    max-width: calc(50% - 5px);
+}
+
+/* ============================================
+   ОШИБКА
+   ============================================ */
+
+.rona-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    text-align: center;
+}
+
+.rona-error-icon {
+    font-size: 2.5em;
+    margin-bottom: 10px;
+}
+
+.rona-error-text {
+    font-size: 0.9em;
+    color: var(--SmartThemeQuoteColor);
+    max-width: 300px;
+    word-break: break-word;
+}
+
+/* ============================================
+   КНОПКА ПЕРЕГЕНЕРАЦИИ
+   ============================================ */
+
+.rona-regenerate-btn {
+    color: var(--SmartThemeBodyColor);
+    transition: color 0.2s, transform 0.2s;
+}
+
+.rona-regenerate-btn:hover {
+    color: #4CAF50;
+    transform: scale(1.1);
+}
+
+/* ============================================
+   АДАПТИВ ДЛЯ МОБИЛЬНЫХ
+   ============================================ */
+
+@media (max-width: 768px) {
+    .rona-settings .flex-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .rona-settings .flex-row > label {
+        min-width: auto;
+        margin-bottom: 5px;
+    }
+    
+    .rona-generated-image {
+        max-height: 300px;
+    }
+    
+    .rona-image-container.two-images .rona-generated-image {
+        max-width: 100%;
+    }
+}
