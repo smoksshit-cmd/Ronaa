@@ -2,34 +2,12 @@ import {
     saveSettingsDebounced,
     getContext,
     extension_settings,
-    callPopup,
-    getCharacters,
-    this_chid,
-    saveChat,
-    chat,
     eventSource,
     event_types,
 } from "../../../script.js";
 
 const MODULE_NAME = 'rona_image_gen';
 const processingMessages = new Set();
-const logBuffer = [];
-const MAX_LOG_ENTRIES = 200;
-
-function ronaLog(level, ...args) {
-    // console.log(`[Rona]`, ...args); // Раскомментируй для отладки
-}
-
-function exportLogs() {
-    const blob = new Blob([logBuffer.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `rona-logs.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toastr.success('Логи экспортированы', 'Rona');
-}
 
 // Настройки по умолчанию
 const defaultSettings = {
@@ -55,7 +33,6 @@ function getSettings() {
     if (!extension_settings[MODULE_NAME]) {
         extension_settings[MODULE_NAME] = structuredClone(defaultSettings);
     }
-    // Дополняем отсутствующие ключи
     for (const key of Object.keys(defaultSettings)) {
         if (!Object.hasOwn(extension_settings[MODULE_NAME], key)) {
             extension_settings[MODULE_NAME][key] = defaultSettings[key];
@@ -72,15 +49,15 @@ function saveSettings() {
 
 function getSceneFromLastMessage() {
     try {
+        const context = getContext();
+        const chat = context.chat;
         if (!chat || chat.length === 0) return null;
         
-        // Ищем последнее сообщение (не юзера)
         const lastMsg = [...chat].reverse().find(msg => !msg.is_user && msg.mes);
         if (!lastMsg) return null;
         
         let text = lastMsg.mes.replace(/<[^>]+>/g, ' ').trim();
         
-        // Ищем действия в звездочках (*действия*)
         const actions = [];
         const matches = text.matchAll(/[*_]([^*_]{2,})[*_]/g); 
         for (const m of matches) actions.push(m[1].trim());
@@ -89,21 +66,27 @@ function getSceneFromLastMessage() {
         if (actions.length > 0) {
             scene = actions.slice(0, 3).join(', ');
         } else {
-            // Если действий нет, берем первое предложение
             const sentences = text.split(/[.!?\n]+/).filter(s => s.trim().length > 10);
             scene = sentences[0] || '';
         }
         
         scene = scene.substring(0, 300).replace(/[\r\n]+/g, ' ');
         return scene.length < 3 ? null : scene;
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error('[Rona] getSceneFromLastMessage error:', e);
+        return null; 
+    }
 }
 
 function detectClothingFromChat(depth = 5) {
     try {
+        const context = getContext();
+        const chat = context.chat;
+        const characters = context.characters;
+        const characterId = context.characterId;
+        
         if (!chat || chat.length === 0) return null;
-        const characters = getCharacters(); // Используем импортированную функцию
-        const charName = characters[this_chid]?.name || 'Character';
+        const charName = characters?.[characterId]?.name || 'Character';
         
         const patterns = [
             /(?:wearing|wears?|dressed\s+in|clothed\s+in|puts?\s+on)[:\s]+([^.;!?\n]{5,100})/gi,
@@ -129,24 +112,28 @@ function detectClothingFromChat(depth = 5) {
             }
         }
         return found.length === 0 ? null : `${charName} wearing: ${found.slice(0, 2).join(', ')}`;
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error('[Rona] detectClothingFromChat error:', e);
+        return null; 
+    }
 }
 
 function autoParseAppearance() {
     try {
-        if (this_chid === undefined) return null;
-        const characters = getCharacters();
-        const char = characters[this_chid];
+        const context = getContext();
+        const characters = context.characters;
+        const characterId = context.characterId;
+        
+        if (characterId === undefined || characterId === null) return null;
+        const char = characters?.[characterId];
         if (!char) return null;
         
         const desc = char.description || '';
         const name = char.name || 'Character';
         
-        // 1. Блок [Appearance]
         const blockMatch = desc.match(/\[Appearance[:\]]\s*([^\[]{10,500})/i);
         if (blockMatch) return `${name}: ${blockMatch[1].trim().replace(/\n/g, ', ')}`;
         
-        // 2. Отдельные черты
         const traits = [];
         const hairMatch = desc.match(/([a-zA-Z,\s]+) hair/i);
         if (hairMatch) traits.push(`${hairMatch[1].trim()} hair`);
@@ -156,13 +143,15 @@ function autoParseAppearance() {
         
         if (traits.length > 0) return `${name}: ${traits.join(', ')}`;
         
-        // 3. Просто начало описания (резерв)
         if (desc.length > 0) {
             const cleanDesc = desc.replace(/[\r\n]+/g, ' ').substring(0, 300);
             return `${name}: ${cleanDesc}`;
         }
         return null;
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error('[Rona] autoParseAppearance error:', e);
+        return null; 
+    }
 }
 
 function buildFullPrompt() {
@@ -195,7 +184,7 @@ function buildFullPrompt() {
 
 function encodePromptForUrl(prompt) {
     let clean = prompt.trim().replace(/\s+/g, ' ');
-    clean = clean.replace(/ /g, '_'); // Nano/NovelAI любят подчеркивания
+    clean = clean.replace(/ /g, '_');
     return encodeURIComponent(clean);
 }
 
@@ -215,7 +204,6 @@ async function performRequest(baseUrl, prompt) {
     });
     
     if (!response.ok) {
-        const text = await response.text();
         throw new Error(`HTTP ${response.status}`);
     }
     
@@ -226,7 +214,6 @@ async function performRequest(baseUrl, prompt) {
         if (result.output) return `data:image/png;base64,${result.output}`;
         if (result.image) return `data:image/png;base64,${result.image}`;
         if (result.images && result.images[0]) return `data:image/png;base64,${result.images[0]}`;
-        // Gemini/Google
         if (result.candidates?.[0]?.content?.parts?.[0]?.inlineData) {
             return `data:${result.candidates[0].content.parts[0].inlineData.mimeType};base64,${result.candidates[0].content.parts[0].inlineData.data}`;
         }
@@ -288,12 +275,13 @@ async function saveImageToFile(dataUrl) {
     const format = match[1];
     const base64Data = match[2];
     
-    const characters = getCharacters();
-    const charName = characters[this_chid]?.name || 'rona';
+    const context = getContext();
+    const characters = context.characters;
+    const characterId = context.characterId;
+    const charName = characters?.[characterId]?.name || 'rona';
     const filename = `rona_${charName}_${Date.now()}`;
     
-    // Получаем хедеры для запроса (CSRF и т.д.)
-    const headers = getContext().getRequestHeaders ? getContext().getRequestHeaders() : { 'Content-Type': 'application/json' };
+    const headers = context.getRequestHeaders ? context.getRequestHeaders() : { 'Content-Type': 'application/json' };
 
     const response = await fetch('/api/images/upload', {
         method: 'POST',
@@ -317,9 +305,10 @@ async function processMessage(messageId) {
     if (!settings.enabled || !settings.autoGenerate) return;
     if (processingMessages.has(messageId)) return;
     
-    // ВАЖНО: chat - массив сообщений. Ищем по индексу или перебором
+    const context = getContext();
+    const chat = context.chat;
+    
     let message = chat[messageId];
-    // Если messageId не индекс, а реальный ID (зависит от версии ST), ищем вручную:
     if (!message) message = chat.find(m => m.mesId === messageId);
     
     if (!message || message.is_user || message.rona_generated) return;
@@ -355,11 +344,17 @@ async function processMessage(messageId) {
         placeholder.replaceWith(imgContainer);
         message.rona_generated = true;
         message.rona_paths = paths;
-        saveChat(); // Импортированная функция
+        
+        // Сохраняем чат через context
+        if (context.saveChat) {
+            context.saveChat();
+        }
         
     } catch (e) {
         placeholder.innerText = `❌ ${e.message}`;
-        toastr.error(e.message);
+        if (typeof toastr !== 'undefined') {
+            toastr.error(e.message, 'Rona');
+        }
     } finally {
         processingMessages.delete(messageId);
     }
@@ -374,6 +369,8 @@ function addRegenerateButton(msgEl, messageId) {
     btn.className = 'mes_button rona-regen fa-solid fa-paintbrush interactable';
     btn.title = 'Rona: Нарисовать';
     btn.onclick = () => {
+        const context = getContext();
+        const chat = context.chat;
         const message = chat[messageId];
         if (message) message.rona_generated = false;
         processMessage(messageId);
@@ -383,10 +380,11 @@ function addRegenerateButton(msgEl, messageId) {
 
 function createSettingsUI() {
     const settings = getSettings();
-    const container = $('#extensions_settings'); // Используем jQuery глобально или импорт
-    if (container.length === 0) return;
+    const container = document.getElementById('extensions_settings');
+    if (!container) return;
     
-    const html = `
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
             <b>🎨 Rona: Генератор</b>
@@ -396,14 +394,19 @@ function createSettingsUI() {
             <label class="checkbox_label"><input type="checkbox" id="rona_enabled" ${settings.enabled ? 'checked' : ''}> Включено</label>
             <label class="checkbox_label"><input type="checkbox" id="rona_auto" ${settings.autoGenerate ? 'checked' : ''}> Авто-генерация</label>
             <hr>
+            <label class="checkbox_label"><input type="checkbox" id="rona_use_nai" ${settings.useNovelAI ? 'checked' : ''}> NovelAI</label>
             <label>NovelAI URL (с ключом):</label>
-            <input type="text" class="text_pole" id="rona_nai_url" value="${settings.novelaiUrl}" placeholder="https://aituned.xyz/v1/novelai/KEY">
+            <input type="text" class="text_pole" id="rona_nai_url" value="${settings.novelaiUrl}" placeholder="https://proxy.com/novelai/KEY">
             
+            <label class="checkbox_label"><input type="checkbox" id="rona_use_banana" ${settings.useBanana ? 'checked' : ''}> Nano-Banana</label>
             <label>Nano-Banana URL (с ключом):</label>
-            <input type="text" class="text_pole" id="rona_banana_url" value="${settings.bananaUrl}" placeholder="https://aituned.xyz/v1/nano-banana/KEY">
+            <input type="text" class="text_pole" id="rona_banana_url" value="${settings.bananaUrl}" placeholder="https://proxy.com/nano-banana/KEY">
             <hr>
             <label>Позитивный промпт:</label>
             <textarea class="text_pole" id="rona_pos">${settings.positivePrompt}</textarea>
+            
+            <label>Негативный промпт:</label>
+            <textarea class="text_pole" id="rona_neg">${settings.negativePrompt}</textarea>
             
             <label>Стиль:</label>
             <input type="text" class="text_pole" id="rona_style" value="${settings.fixedStyle}">
@@ -416,43 +419,51 @@ function createSettingsUI() {
             <label>Внешность Юзера:</label>
             <textarea class="text_pole" id="rona_user">${settings.userAppearance}</textarea>
             
+            <label class="checkbox_label"><input type="checkbox" id="rona_clothing" ${settings.detectClothing ? 'checked' : ''}> Детектить одежду</label>
             <label class="checkbox_label"><input type="checkbox" id="rona_scene" ${settings.includeScene ? 'checked' : ''}> Считывать сцену</label>
         </div>
     </div>`;
     
-    container.append(html);
+    container.appendChild(wrapper);
     
-    // Биндинг
-    $('#rona_enabled').change(e => { settings.enabled = e.target.checked; saveSettings(); });
-    $('#rona_auto').change(e => { settings.autoGenerate = e.target.checked; saveSettings(); });
-    $('#rona_nai_url').on('input', e => { settings.novelaiUrl = e.target.value; saveSettings(); });
-    $('#rona_banana_url').on('input', e => { settings.bananaUrl = e.target.value; saveSettings(); });
-    $('#rona_pos').on('input', e => { settings.positivePrompt = e.target.value; saveSettings(); });
-    $('#rona_style').on('input', e => { settings.fixedStyle = e.target.value; saveSettings(); });
-    $('#rona_style_on').change(e => { settings.fixedStyleEnabled = e.target.checked; saveSettings(); });
-    $('#rona_char').on('input', e => { settings.charAppearance = e.target.value; saveSettings(); });
-    $('#rona_autoparse').change(e => { settings.autoParseAppearance = e.target.checked; saveSettings(); });
-    $('#rona_user').on('input', e => { settings.userAppearance = e.target.value; saveSettings(); });
-    $('#rona_scene').change(e => { settings.includeScene = e.target.checked; saveSettings(); });
+    // Биндинг событий
+    document.getElementById('rona_enabled').addEventListener('change', e => { settings.enabled = e.target.checked; saveSettings(); });
+    document.getElementById('rona_auto').addEventListener('change', e => { settings.autoGenerate = e.target.checked; saveSettings(); });
+    document.getElementById('rona_use_nai').addEventListener('change', e => { settings.useNovelAI = e.target.checked; saveSettings(); });
+    document.getElementById('rona_nai_url').addEventListener('input', e => { settings.novelaiUrl = e.target.value; saveSettings(); });
+    document.getElementById('rona_use_banana').addEventListener('change', e => { settings.useBanana = e.target.checked; saveSettings(); });
+    document.getElementById('rona_banana_url').addEventListener('input', e => { settings.bananaUrl = e.target.value; saveSettings(); });
+    document.getElementById('rona_pos').addEventListener('input', e => { settings.positivePrompt = e.target.value; saveSettings(); });
+    document.getElementById('rona_neg').addEventListener('input', e => { settings.negativePrompt = e.target.value; saveSettings(); });
+    document.getElementById('rona_style').addEventListener('input', e => { settings.fixedStyle = e.target.value; saveSettings(); });
+    document.getElementById('rona_style_on').addEventListener('change', e => { settings.fixedStyleEnabled = e.target.checked; saveSettings(); });
+    document.getElementById('rona_char').addEventListener('input', e => { settings.charAppearance = e.target.value; saveSettings(); });
+    document.getElementById('rona_autoparse').addEventListener('change', e => { settings.autoParseAppearance = e.target.checked; saveSettings(); });
+    document.getElementById('rona_user').addEventListener('input', e => { settings.userAppearance = e.target.value; saveSettings(); });
+    document.getElementById('rona_clothing').addEventListener('change', e => { settings.detectClothing = e.target.checked; saveSettings(); });
+    document.getElementById('rona_scene').addEventListener('change', e => { settings.includeScene = e.target.checked; saveSettings(); });
 }
 
-// START
+// === ИНИЦИАЛИЗАЦИЯ ===
 jQuery(async () => {
+    console.log('[Rona] Initializing...');
     getSettings();
     createSettingsUI();
     
-    // Добавляем кнопки к уже загруженным сообщениям
-    $('.mes').each(function() {
-        const id = $(this).attr('mesid');
-        if (id) addRegenerateButton(this, id);
+    // Добавляем кнопки к существующим сообщениям
+    document.querySelectorAll('.mes').forEach(el => {
+        const id = el.getAttribute('mesid');
+        if (id) addRegenerateButton(el, parseInt(id));
     });
     
-    // Слушаем рендер новых сообщений
-    eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (id) => {
-        const el = document.querySelector(`.mes[mesid="${id}"]`);
+    // Слушаем новые сообщения
+    eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => {
+        const el = document.querySelector(`.mes[mesid="${messageId}"]`);
         if (el) {
-            addRegenerateButton(el, id);
-            processMessage(id);
+            addRegenerateButton(el, messageId);
+            processMessage(messageId);
         }
     });
+    
+    console.log('[Rona] Initialized successfully');
 });
