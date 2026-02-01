@@ -345,7 +345,6 @@ async function processMessage(messageId) {
         message.rona_generated = true;
         message.rona_paths = paths;
         
-        // Сохраняем чат через context
         if (context.saveChat) {
             context.saveChat();
         }
@@ -396,17 +395,14 @@ function createSettingsUI() {
             <hr>
             <label class="checkbox_label"><input type="checkbox" id="rona_use_nai" ${settings.useNovelAI ? 'checked' : ''}> NovelAI</label>
             <label>NovelAI URL (с ключом):</label>
-            <input type="text" class="text_pole" id="rona_nai_url" value="${settings.novelaiUrl}" placeholder="https://proxy.com/novelai/KEY">
+            <input type="text" class="text_pole" id="rona_nai_url" value="${settings.novelaiUrl}" placeholder="https://proxy.com/v1/novelai/KEY">
             
             <label class="checkbox_label"><input type="checkbox" id="rona_use_banana" ${settings.useBanana ? 'checked' : ''}> Nano-Banana</label>
             <label>Nano-Banana URL (с ключом):</label>
-            <input type="text" class="text_pole" id="rona_banana_url" value="${settings.bananaUrl}" placeholder="https://proxy.com/nano-banana/KEY">
+            <input type="text" class="text_pole" id="rona_banana_url" value="${settings.bananaUrl}" placeholder="https://proxy.com/v1/nano-banana/KEY">
             <hr>
             <label>Позитивный промпт:</label>
             <textarea class="text_pole" id="rona_pos">${settings.positivePrompt}</textarea>
-            
-            <label>Негативный промпт:</label>
-            <textarea class="text_pole" id="rona_neg">${settings.negativePrompt}</textarea>
             
             <label>Стиль:</label>
             <input type="text" class="text_pole" id="rona_style" value="${settings.fixedStyle}">
@@ -419,14 +415,13 @@ function createSettingsUI() {
             <label>Внешность Юзера:</label>
             <textarea class="text_pole" id="rona_user">${settings.userAppearance}</textarea>
             
-            <label class="checkbox_label"><input type="checkbox" id="rona_clothing" ${settings.detectClothing ? 'checked' : ''}> Детектить одежду</label>
             <label class="checkbox_label"><input type="checkbox" id="rona_scene" ${settings.includeScene ? 'checked' : ''}> Считывать сцену</label>
         </div>
     </div>`;
     
     container.appendChild(wrapper);
     
-    // Биндинг событий
+    // Биндинг
     document.getElementById('rona_enabled').addEventListener('change', e => { settings.enabled = e.target.checked; saveSettings(); });
     document.getElementById('rona_auto').addEventListener('change', e => { settings.autoGenerate = e.target.checked; saveSettings(); });
     document.getElementById('rona_use_nai').addEventListener('change', e => { settings.useNovelAI = e.target.checked; saveSettings(); });
@@ -434,29 +429,25 @@ function createSettingsUI() {
     document.getElementById('rona_use_banana').addEventListener('change', e => { settings.useBanana = e.target.checked; saveSettings(); });
     document.getElementById('rona_banana_url').addEventListener('input', e => { settings.bananaUrl = e.target.value; saveSettings(); });
     document.getElementById('rona_pos').addEventListener('input', e => { settings.positivePrompt = e.target.value; saveSettings(); });
-    document.getElementById('rona_neg').addEventListener('input', e => { settings.negativePrompt = e.target.value; saveSettings(); });
     document.getElementById('rona_style').addEventListener('input', e => { settings.fixedStyle = e.target.value; saveSettings(); });
     document.getElementById('rona_style_on').addEventListener('change', e => { settings.fixedStyleEnabled = e.target.checked; saveSettings(); });
     document.getElementById('rona_char').addEventListener('input', e => { settings.charAppearance = e.target.value; saveSettings(); });
     document.getElementById('rona_autoparse').addEventListener('change', e => { settings.autoParseAppearance = e.target.checked; saveSettings(); });
     document.getElementById('rona_user').addEventListener('input', e => { settings.userAppearance = e.target.value; saveSettings(); });
-    document.getElementById('rona_clothing').addEventListener('change', e => { settings.detectClothing = e.target.checked; saveSettings(); });
     document.getElementById('rona_scene').addEventListener('change', e => { settings.includeScene = e.target.checked; saveSettings(); });
 }
 
-// === ИНИЦИАЛИЗАЦИЯ ===
+// START
 jQuery(async () => {
     console.log('[Rona] Initializing...');
     getSettings();
     createSettingsUI();
     
-    // Добавляем кнопки к существующим сообщениям
     document.querySelectorAll('.mes').forEach(el => {
         const id = el.getAttribute('mesid');
         if (id) addRegenerateButton(el, parseInt(id));
     });
     
-    // Слушаем новые сообщения
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => {
         const el = document.querySelector(`.mes[mesid="${messageId}"]`);
         if (el) {
@@ -465,5 +456,5 @@ jQuery(async () => {
         }
     });
     
-    console.log('[Rona] Initialized successfully');
+    console.log('[Rona] Loaded successfully!');
 });
