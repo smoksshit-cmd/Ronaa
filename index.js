@@ -543,63 +543,114 @@ async function generateViaBanana(prompt) {
         throw new Error('URL для Nano-Banana не настроен');
     }
     
-    // Формат URL: https://proxy/nano-banana/KEY
-    // Нужно добавить /v1beta/models/nano-banana:generateContent
+    // Формат URL от пользователя: https://aituned.xyz/v1/nano-banana/YOUR_KEY
+    // Нужно добавить: /prompt/[DESC]
     const baseUrl = settings.bananaUrl.replace(/\/$/, '');
-    const url = `${baseUrl}/v1beta/models/nano-banana:generateContent`;
     
-    const body = {
-        contents: [{
-            role: 'user',
-            parts: [{ text: prompt }]
-        }],
-        generationConfig: {
-            responseModalities: ['TEXT', 'IMAGE'],
-            imageConfig: {
-                aspectRatio: settings.bananaAspectRatio || '2:3',
-                imageSize: settings.bananaImageSize || '1K'
-            }
-        }
-    };
+    // Подготавливаем промпт: заменяем пробелы на underscores
+    let cleanPrompt = prompt
+        .replace(/\[STYLE:\s*([^\]]+)\]/gi, '$1,')
+        .replace(/\[Character Reference:\s*([^\]]+)\]/gi, '$1,')
+        .replace(/\[User Reference:\s*([^\]]+)\]/gi, '$1,')
+        .replace(/\[Current Clothing:\s*([^\]]+)\]/gi, '$1,')
+        .replace(/\[AVOID:\s*([^\]]+)\]/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
     
-    ronaLog('INFO', `Запрос к Nano-Banana: ${url}`);
+    // Кодируем промпт для URL (пробелы → underscores)
+    const encodedPrompt = cleanPrompt
+        .replace(/\s+/g, '_')
+        .replace(/[^\w\-_.,!?]/g, '_');
+    
+    const url = `${baseUrl}/prompt/${encodedPrompt}`;
+    
+    ronaLog('INFO', `Запрос к Nano-Banana: ${url.substring(0, 150)}...`);
+    ronaLog('INFO', `Промпт (${cleanPrompt.length} символов): ${cleanPrompt.substring(0, 100)}...`);
     
     const response = await fetch(url, {
-        method: 'POST',
+        method: 'GET',
         headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
+            'Accept': 'image/*, application/json'
+        }
     });
     
     if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Nano-Banana API Error (${response.status}): ${text}`);
+        throw new Error(`Nano-Banana API Error (${response.status}): ${text.substring(0, 200)}`);
     }
     
-    const result = await response.json();
+    const contentType = response.headers.get('content-type') || '';
     
-    const candidates = result.candidates || [];
-    if (candidates.length === 0) {
-        throw new Error('Нет кандидатов в ответе Nano-Banana');
+    // Если вернулось изображение напрямую
+    if (contentType.includes('image/')) {
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
     }
     
-    const responseParts = candidates[0].content?.parts || [];
-    
-    for (const part of responseParts) {
-        if (part.inlineData) {
-            return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    // Если вернулся JSON (Gemini формат)
+    if (contentType.includes('application/json')) {
+        const result = await response.json();
+        
+        // Gemini формат
+        const candidates = result.candidates || [];
+        if (candidates.length > 0) {
+            const responseParts = candidates[0].content?.parts || [];
+            for (const part of responseParts) {
+                if (part.inlineData) {
+                    return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                }
+                if (part.inline_data) {
+                    return `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`;
+                }
+            }
         }
-        if (part.inline_data) {
-            return `data:${part.inline_data.mime_type};base64,${part.inline_data.data}`;
+        
+        // Другие форматы
+        if (result.output) {
+            return `data:image/png;base64,${result.output}`;
         }
+        if (result.image) {
+            return `data:image/png;base64,${result.image}`;
+        }
+        if (result.url) {
+            const imgResponse = await fetch(result.url);
+            const blob = await imgResponse.blob();
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+        
+        ronaLog('WARN', 'Неизвестный формат ответа Nano-Banana:', Object.keys(result));
+        throw new Error('Изображение не найдено в ответе Nano-Banana');
     }
     
-    throw new Error('Изображение не найдено в ответе Nano-Banana');
+    // Пробуем как blob на всякий случай
+    const blob = await response.blob();
+    if (blob.size > 1000) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+    
+    throw new Error('Неизвестный формат ответа от Nano-Banana');
 }
 
 /**
- * Генерация через NovelAI API
+ * Генерация через NovelAI API (aituned.xyz формат)
+ * 
+ * Формат URL: https://aituned.xyz/v1/novelai/KEY/prompt/[DESC]
+ * [DESC] - промпт с underscores вместо пробелов
  */
 async function generateViaNovelAI(prompt) {
     const settings = getSettings();
@@ -608,79 +659,101 @@ async function generateViaNovelAI(prompt) {
         throw new Error('URL для NovelAI не настроен');
     }
     
-    // Формат URL: https://proxy/novelai/KEY
-    // NovelAI использует /ai/generate-image
+    // Формат URL от пользователя: https://aituned.xyz/v1/novelai/YOUR_KEY
+    // Нужно добавить: /prompt/[DESC]
     const baseUrl = settings.novelaiUrl.replace(/\/$/, '');
-    const url = `${baseUrl}/ai/generate-image`;
     
-    // Разделяем positive и negative
-    let positivePrompt = prompt;
-    let negativePrompt = settings.negativePrompt || '';
+    // Подготавливаем промпт: заменяем пробелы на underscores
+    // Убираем [AVOID: ...] и другие теги, оставляем чистый промпт
+    let cleanPrompt = prompt
+        .replace(/\[STYLE:\s*([^\]]+)\]/gi, '$1,') // Стиль в начало
+        .replace(/\[Character Reference:\s*([^\]]+)\]/gi, '$1,')
+        .replace(/\[User Reference:\s*([^\]]+)\]/gi, '$1,')
+        .replace(/\[Current Clothing:\s*([^\]]+)\]/gi, '$1,')
+        .replace(/\[AVOID:\s*([^\]]+)\]/gi, '') // Negative убираем (для NovelAI отдельно)
+        .replace(/\s+/g, ' ')
+        .trim();
     
-    // Извлекаем [AVOID: ...] из промпта
-    const avoidMatch = prompt.match(/\[AVOID:\s*([^\]]+)\]/i);
-    if (avoidMatch) {
-        negativePrompt = avoidMatch[1];
-        positivePrompt = prompt.replace(/\[AVOID:[^\]]+\]/gi, '').trim();
-    }
+    // Кодируем промпт для URL (пробелы → underscores)
+    const encodedPrompt = cleanPrompt
+        .replace(/\s+/g, '_')
+        .replace(/[^\w\-_.,!?]/g, '_'); // Безопасные символы
     
-    const body = {
-        input: positivePrompt,
-        model: settings.novelaiModel || 'nai-diffusion-3',
-        action: 'generate',
-        parameters: {
-            width: settings.novelaiWidth || 832,
-            height: settings.novelaiHeight || 1216,
-            scale: settings.novelaiScale || 5,
-            sampler: settings.novelaiSampler || 'k_euler',
-            steps: settings.novelaiSteps || 28,
-            n_samples: 1,
-            ucPreset: 0,
-            qualityToggle: true,
-            negative_prompt: negativePrompt
-        }
-    };
+    const url = `${baseUrl}/prompt/${encodedPrompt}`;
     
-    ronaLog('INFO', `Запрос к NovelAI: ${url}`);
+    ronaLog('INFO', `Запрос к NovelAI: ${url.substring(0, 150)}...`);
+    ronaLog('INFO', `Промпт (${cleanPrompt.length} символов): ${cleanPrompt.substring(0, 100)}...`);
     
     const response = await fetch(url, {
-        method: 'POST',
+        method: 'GET',
         headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
+            'Accept': 'image/*, application/json'
+        }
     });
     
     if (!response.ok) {
         const text = await response.text();
-        throw new Error(`NovelAI API Error (${response.status}): ${text}`);
+        throw new Error(`NovelAI API Error (${response.status}): ${text.substring(0, 200)}`);
     }
     
-    // NovelAI возвращает zip с изображениями или напрямую base64
-    const contentType = response.headers.get('content-type');
+    const contentType = response.headers.get('content-type') || '';
     
-    if (contentType?.includes('application/zip')) {
-        // Распаковка zip - нужна библиотека
-        throw new Error('ZIP формат ответа NovelAI требует дополнительной обработки');
+    // Если вернулось изображение напрямую
+    if (contentType.includes('image/')) {
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
     }
     
-    const result = await response.json();
-    
-    // Проверяем разные форматы ответа
-    if (result.output) {
-        // Прямой base64
-        return `data:image/png;base64,${result.output}`;
+    // Если вернулся JSON
+    if (contentType.includes('application/json')) {
+        const result = await response.json();
+        
+        // Проверяем разные форматы ответа
+        if (result.output) {
+            return `data:image/png;base64,${result.output}`;
+        }
+        if (result.data?.[0]?.b64_json) {
+            return `data:image/png;base64,${result.data[0].b64_json}`;
+        }
+        if (result.images?.[0]) {
+            return `data:image/png;base64,${result.images[0]}`;
+        }
+        if (result.image) {
+            return `data:image/png;base64,${result.image}`;
+        }
+        if (result.url) {
+            // Если вернулся URL изображения - скачиваем
+            const imgResponse = await fetch(result.url);
+            const blob = await imgResponse.blob();
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+        
+        ronaLog('WARN', 'Неизвестный формат ответа NovelAI:', Object.keys(result));
+        throw new Error('Изображение не найдено в ответе NovelAI');
     }
     
-    if (result.data?.[0]?.b64_json) {
-        return `data:image/png;base64,${result.data[0].b64_json}`;
+    // Пробуем как blob на всякий случай
+    const blob = await response.blob();
+    if (blob.size > 1000) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
     }
     
-    if (result.images?.[0]) {
-        return `data:image/png;base64,${result.images[0]}`;
-    }
-    
-    throw new Error('Изображение не найдено в ответе NovelAI');
+    throw new Error('Неизвестный формат ответа от NovelAI');
 }
 
 /**
@@ -997,33 +1070,12 @@ function createSettingsUI() {
                         <h4>🍌 Nano-Banana</h4>
                         
                         <div class="flex-col">
-                            <label for="rona_banana_url">URL (формат: https://proxy/nano-banana/YOUR_KEY)</label>
+                            <label for="rona_banana_url">URL (формат: https://aituned.xyz/v1/nano-banana/YOUR_KEY)</label>
                             <input type="text" id="rona_banana_url" class="text_pole" 
                                    value="${settings.bananaUrl}" 
-                                   placeholder="https://your-proxy.com/nano-banana/your-key">
+                                   placeholder="https://aituned.xyz/v1/nano-banana/sk_aituned_xxx">
                         </div>
-                        
-                        <div class="flex-row">
-                            <label for="rona_banana_aspect">Соотношение сторон</label>
-                            <select id="rona_banana_aspect" class="flex1">
-                                <option value="1:1" ${settings.bananaAspectRatio === '1:1' ? 'selected' : ''}>1:1 (Квадрат)</option>
-                                <option value="2:3" ${settings.bananaAspectRatio === '2:3' ? 'selected' : ''}>2:3 (Портрет)</option>
-                                <option value="3:2" ${settings.bananaAspectRatio === '3:2' ? 'selected' : ''}>3:2 (Альбом)</option>
-                                <option value="3:4" ${settings.bananaAspectRatio === '3:4' ? 'selected' : ''}>3:4 (Портрет)</option>
-                                <option value="4:3" ${settings.bananaAspectRatio === '4:3' ? 'selected' : ''}>4:3 (Альбом)</option>
-                                <option value="9:16" ${settings.bananaAspectRatio === '9:16' ? 'selected' : ''}>9:16 (Вертикальный)</option>
-                                <option value="16:9" ${settings.bananaAspectRatio === '16:9' ? 'selected' : ''}>16:9 (Широкий)</option>
-                            </select>
-                        </div>
-                        
-                        <div class="flex-row">
-                            <label for="rona_banana_size">Разрешение</label>
-                            <select id="rona_banana_size" class="flex1">
-                                <option value="1K" ${settings.bananaImageSize === '1K' ? 'selected' : ''}>1K</option>
-                                <option value="2K" ${settings.bananaImageSize === '2K' ? 'selected' : ''}>2K</option>
-                                <option value="4K" ${settings.bananaImageSize === '4K' ? 'selected' : ''}>4K</option>
-                            </select>
-                        </div>
+                        <p class="hint">Промпт отправляется через URL с подчёркиваниями вместо пробелов</p>
                         
                         <hr>
                     </div>
@@ -1033,40 +1085,12 @@ function createSettingsUI() {
                         <h4>✨ NovelAI</h4>
                         
                         <div class="flex-col">
-                            <label for="rona_novelai_url">URL (формат: https://proxy/novelai/YOUR_KEY)</label>
+                            <label for="rona_novelai_url">URL (формат: https://aituned.xyz/v1/novelai/YOUR_KEY)</label>
                             <input type="text" id="rona_novelai_url" class="text_pole" 
                                    value="${settings.novelaiUrl}" 
-                                   placeholder="https://your-proxy.com/novelai/your-key">
+                                   placeholder="https://aituned.xyz/v1/novelai/sk_aituned_xxx">
                         </div>
-                        
-                        <div class="flex-row">
-                            <label for="rona_novelai_model">Модель</label>
-                            <select id="rona_novelai_model" class="flex1">
-                                <option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion V3</option>
-                                <option value="nai-diffusion-2" ${settings.novelaiModel === 'nai-diffusion-2' ? 'selected' : ''}>NAI Diffusion V2</option>
-                                <option value="nai-diffusion-furry" ${settings.novelaiModel === 'nai-diffusion-furry' ? 'selected' : ''}>NAI Diffusion Furry</option>
-                            </select>
-                        </div>
-                        
-                        <div class="flex-row">
-                            <label>Размер</label>
-                            <input type="number" id="rona_novelai_width" class="text_pole" style="width: 70px;" 
-                                   value="${settings.novelaiWidth}" placeholder="832"> x
-                            <input type="number" id="rona_novelai_height" class="text_pole" style="width: 70px;" 
-                                   value="${settings.novelaiHeight}" placeholder="1216">
-                        </div>
-                        
-                        <div class="flex-row">
-                            <label for="rona_novelai_steps">Шаги</label>
-                            <input type="number" id="rona_novelai_steps" class="text_pole flex1" 
-                                   value="${settings.novelaiSteps}" min="1" max="50">
-                        </div>
-                        
-                        <div class="flex-row">
-                            <label for="rona_novelai_scale">CFG Scale</label>
-                            <input type="number" id="rona_novelai_scale" class="text_pole flex1" 
-                                   value="${settings.novelaiScale}" min="1" max="20" step="0.5">
-                        </div>
+                        <p class="hint">Промпт отправляется через URL с подчёркиваниями вместо пробелов</p>
                         
                         <hr>
                     </div>
